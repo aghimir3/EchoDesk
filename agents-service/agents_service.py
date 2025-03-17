@@ -114,6 +114,11 @@ def unwrap_response(response):
         return response["data"]
     return response
 
+# Helper function to escape OData filter values
+def escape_odata_value(value: str) -> str:
+    """Escape single quotes in OData filter values by doubling them."""
+    return value.replace("'", "''")
+
 # Function Tools for Freshdesk
 @function_tool
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
@@ -173,10 +178,11 @@ def update_ticket_action(ticket_info: str, audit_log: str) -> dict:
 @function_tool
 @standardize_output
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-def create_user_action(first_name: str, last_name: str, license_type: Optional[str]) -> dict:
+def create_user_action(first_name: str, last_name: str, license_type: Optional[str], new_password: Optional[str] = None) -> dict:
     email_pattern = os.environ.get("EMAIL_PATTERN", "@yourdomain.com")
     user_principal_name = f"{first_name.lower()}.{last_name.lower()}{email_pattern}"
-    default_password = os.environ.get("DEFAULT_PASSWORD", "SecureRandomPassword123!")
+    # Use provided password or fallback to default from .env
+    password = new_password if new_password else os.environ.get("DEFAULT_PASSWORD", "SecureRandomPassword123!")
     headers = get_azure_headers("application/json")
     user_payload = {
         "accountEnabled": True,
@@ -185,7 +191,7 @@ def create_user_action(first_name: str, last_name: str, license_type: Optional[s
         "userPrincipalName": user_principal_name,
         "passwordProfile": {
             "forceChangePasswordNextSignIn": True,
-            "password": default_password
+            "password": password
         }
     }
     create_user_url = "https://graph.microsoft.com/v1.0/users"
@@ -194,17 +200,6 @@ def create_user_action(first_name: str, last_name: str, license_type: Optional[s
     user_data = response.json()
     user_id = user_data.get("id")
     assigned_license = None
-    if license_type:
-        default_sku = os.environ.get("DEFAULT_LICENSE_SKUID")
-        if default_sku:
-            assign_url = f"https://graph.microsoft.com/v1.0/users/{user_id}/assignLicense"
-            license_payload = {
-                "addLicenses": [{"skuId": default_sku}],
-                "removeLicenses": []
-            }
-            license_response = requests.post(assign_url, json=license_payload, headers=headers)
-            license_response.raise_for_status()
-            assigned_license = license_type
     return {
         "azure": {
             "userPrincipalName": user_principal_name,
@@ -216,16 +211,42 @@ def create_user_action(first_name: str, last_name: str, license_type: Optional[s
 @function_tool
 @standardize_output
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-def get_user_info_action(first_name: str, last_name: str) -> dict:
+def get_user_info_action(
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
+    email: Optional[str] = None,
+    display_name: Optional[str] = None
+) -> dict:
+    """
+    Retrieve user information from Azure AD using multiple optional search criteria.
+    At least one search criterion must be provided.
+    """
     headers = get_azure_headers()
-    filter_query = f"givenName eq '{first_name}' and surname eq '{last_name}'"
+    filters = []
+    
+    if email:
+        filters.append(f"userPrincipalName eq '{escape_odata_value(email)}'")
+    if display_name:
+        filters.append(f"displayName eq '{escape_odata_value(display_name)}'")
+    if first_name and last_name:
+        filters.append(f"givenName eq '{escape_odata_value(first_name)}' and surname eq '{escape_odata_value(last_name)}'")
+    elif first_name:
+        filters.append(f"givenName eq '{escape_odata_value(first_name)}'")
+    elif last_name:
+        filters.append(f"surname eq '{escape_odata_value(last_name)}'")
+
+    if not filters:
+        raise Exception("At least one search criterion (email, display_name, first_name, or last_name) must be provided.")
+
+    filter_query = " and ".join(filters)
     get_url = f"https://graph.microsoft.com/v1.0/users?$filter={filter_query}"
     response = requests.get(get_url, headers=headers)
     response.raise_for_status()
     users_data = response.json()
     users = users_data.get("value", [])
     if not users:
-        raise Exception(f"No user found with name {first_name} {last_name}")
+        criteria = ", ".join([f"{k}='{v}'" for k, v in {"first_name": first_name, "last_name": last_name, "email": email, "display_name": display_name}.items() if v])
+        raise Exception(f"No user found with criteria: {criteria}")
     return {"users": users}
 
 @function_tool
@@ -315,12 +336,13 @@ extraction_agent = Agent(
     instructions=(
         "Analyze the user's request and extract all relevant information needed to perform helpdesk tasks. "
         "Extract the following fields: first_name, last_name, license_type (if provided), and action. "
-        "Additionally, if available, extract department, job_title, group_id, and new_password. "
+        "Additionally, if available, extract department, job_title, group_id, and new_password (if the user specifies a password for account creation or password change). "
         "Return the output strictly as a JSON object with keys first_name, last_name, license_type, action, "
         "department, job_title, group_id, and new_password. Examples: "
-        "- Input: 'Create an account for John Doe with Premium license' → Output: {\"first_name\": \"John\", \"last_name\": \"Doe\", \"license_type\": \"Premium\", \"action\": \"create account\"} "
-        "- Input: 'Change password for Jane Smith to NewPass123!' → Output: {\"first_name\": \"Jane\", \"last_name\": \"Smith\", \"action\": \"change password\", \"new_password\": \"NewPass123!\"} "
-        "- Input: 'Update profile for Bob Jones with department IT' → Output: {\"first_name\": \"Bob\", \"last_name\": \"Jones\", \"action\": \"update profile\", \"department\": \"IT\"}"
+        "- Input: 'Create an account for John Doe with Premium license and password MySecurePass123' → Output: {\"first_name\": \"John\", \"last_name\": \"Doe\", \"license_type\": \"Premium\", \"action\": \"create account\", \"new_password\": \"MySecurePass123\"} "
+        "- Input: 'Create an account for Jane Smith' → Output: {\"first_name\": \"Jane\", \"last_name\": \"Smith\", \"action\": \"create account\"} "
+        "- Input: 'Change password for Bob Jones to NewPass123!' → Output: {\"first_name\": \"Bob\", \"last_name\": \"Jones\", \"action\": \"change password\", \"new_password\": \"NewPass123!\"} "
+        "- Input: 'Update profile for Alice Johnson with department IT' → Output: {\"first_name\": \"Alice\", \"last_name\": \"Johnson\", \"action\": \"update profile\", \"department\": \"IT\"}"
     ),
     output_type=EnhancedExtractionOutput,
 )
@@ -331,7 +353,7 @@ freshdesk_agent = Agent(
     instructions=(
         "You are a Freshdesk specialist. Based on the input: "
         "- If the input contains 'first_name', 'last_name', 'license_type', and 'action', call create_ticket_action with those fields to create a ticket. "
-        "- If the input contains 'ticket_info' and 'audit_log', call update_ticket_action with those fields to update the ticket. "        
+        "- If the input contains 'ticket_info' and 'audit_log', call update_ticket_action with those fields to update the ticket. "
         "Return your output as JSON. Examples: "
         "- Input: {\"first_name\": \"John\", \"last_name\": \"Doe\", \"license_type\": \"Premium\", \"action\": \"create account\"} → Call create_ticket_action "
         "- Input: {\"ticket_info\": \"12345\", \"audit_log\": \"Audit log message\"} → Call update_ticket_action"
@@ -345,7 +367,7 @@ azure_agent = Agent(
     name="Azure Agent",
     instructions=(
         "You are an Azure AD specialist. Based on the 'action' field in the input, perform the corresponding task: "
-        "- For 'create account', use create_user_action with first_name, last_name, license_type. "
+        "- For 'create account', use create_user_action with first_name, last_name, license_type, and new_password if provided. "
         "- For 'remove account', use get_user_info_action with first_name and last_name to find the user_id, then use remove_account_action with user_id. "
         "- For 'update profile', use get_user_info_action to find the user_id, then use update_user_profile_action with user_id and provided fields (e.g., department, job_title). "
         "- For 'change password', use get_user_info_action to find the user_id, then use change_password_action with user_id and new_password. "
@@ -354,9 +376,9 @@ azure_agent = Agent(
         "- For 'add to group', use get_user_info_action to find the user_id, then use add_user_to_group_action with user_id and group_id. "
         "- For 'remove from group', use get_user_info_action to find the user_id, then use remove_user_from_group_action with user_id and group_id. "
         "Return your output as JSON. Examples: "
-        "- Input: {\"first_name\": \"John\", \"last_name\": \"Doe\", \"license_type\": \"Premium\", \"action\": \"create account\"} → Call create_user_action "
-        "- Input: {\"first_name\": \"Jane\", \"last_name\": \"Smith\", \"action\": \"remove account\"} → Call get_user_info_action, then remove_account_action "
-        "- Input: {\"first_name\": \"Bob\", \"last_name\": \"Jones\", \"action\": \"change password\", \"new_password\": \"NewPass123!\"} → Call get_user_info_action, then change_password_action"
+        "- Input: {\"first_name\": \"John\", \"last_name\": \"Doe\", \"license_type\": \"Premium\", \"action\": \"create account\", \"new_password\": \"MySecurePass123\"} → Call create_user_action with first_name, last_name, license_type, new_password "
+        "- Input: {\"first_name\": \"Jane\", \"last_name\": \"Smith\", \"action\": \"create account\"} → Call create_user_action with first_name, last_name, license_type=None, new_password=None "
+        "- Input: {\"first_name\": \"Bob\", \"last_name\": \"Jones\", \"action\": \"change password\", \"new_password\": \"NewPass123!\"} → Call get_user_info_action, then change_password_action "
     ),
     output_type=None,  # Keeping flexible due to varied tool outputs
     tools=[
@@ -396,7 +418,7 @@ async def process_agent(request: AgentRequest):
         fd_input = json.dumps(extraction.model_dump())
         fd_result = await Runner.run(freshdesk_agent, input=fd_input)
         fd_data = fd_result.final_output
-        ticket_info = fd_data.ticketId  # Use dot notation instead of dictionary access
+        ticket_info = fd_data.ticketId
         if not ticket_info:
             raise Exception("Ticket ID not found in Freshdesk response")
         logging.info(f"Freshdesk ticket created: {ticket_info}")
@@ -417,13 +439,14 @@ async def process_agent(request: AgentRequest):
 
     # Prepare Audit Log
     audit_lines = []
-    audit_lines.append("Hello IT Team,")
+    audit_lines.append("Hello team,")
     audit_lines.append(f"I have processed the request for {extraction.first_name} {extraction.last_name}.")
-    audit_lines.append(f"Action requested: {extraction.action}.")
-    if azure_data:
-        audit_lines.append("Azure actions performed:")
-        audit_lines.append(json.dumps(azure_data, indent=2))
-    audit_lines.append("All actions have been successfully completed. Regards, IT Support.")
+    audit_lines.append(f"Action requested: '{extraction.action}'.")
+    audit_lines.append("All actions have been successfully completed.")
+    audit_lines.append("Regards, IT Support")    
+    # if azure_data:
+    #     audit_lines.append("Azure actions performed:")
+    #     audit_lines.append(f"{json.dumps(azure_data, indent=2)}")
     audit_log = "\n".join(audit_lines)
 
     # Update Freshdesk Ticket
