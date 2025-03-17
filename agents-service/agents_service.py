@@ -432,6 +432,7 @@ async def process_agent(request: AgentRequest):
         azure_input = json.dumps(extraction.model_dump())
         azure_result = await Runner.run(azure_agent, input=azure_input)
         azure_data = azure_result.final_output
+        azure_data = extract_json_from_text(azure_data)
         logging.info(f"Azure actions performed: {azure_data}")
     except Exception as e:
         logging.error(f"Azure actions failed: {e}")
@@ -444,9 +445,9 @@ async def process_agent(request: AgentRequest):
     audit_lines.append(f"Action requested: '{extraction.action}'.")
     audit_lines.append("All actions have been successfully completed.")
     audit_lines.append("Regards, IT Support")    
-    # if azure_data:
-    #     audit_lines.append("Azure actions performed:")
-    #     audit_lines.append(f"{json.dumps(azure_data, indent=2)}")
+    if azure_data:
+        audit_lines.append("Azure actions performed:")
+        audit_lines.append(f"{json.dumps(azure_data, indent=2)}")
     audit_log = "\n".join(audit_lines)
 
     # Update Freshdesk Ticket
