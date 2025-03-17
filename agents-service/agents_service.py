@@ -174,16 +174,25 @@ def update_ticket_action(ticket_info: str, audit_log: str) -> dict:
     response.raise_for_status()
     return {"ticketId": ticket_id, "auditLog": audit_log}
 
-# Function Tools for Azure
 @function_tool
 @standardize_output
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-def create_user_action(first_name: str, last_name: str, license_type: Optional[str], new_password: Optional[str] = None) -> dict:
+def create_user_action(
+    first_name: str,
+    last_name: str,
+    license_type: Optional[str] = None,
+    new_password: Optional[str] = None,
+    job_title: Optional[str] = None,
+    department: Optional[str] = None,
+    group_id: Optional[str] = None
+) -> dict:
     email_pattern = os.environ.get("EMAIL_PATTERN", "@yourdomain.com")
     user_principal_name = f"{first_name.lower()}.{last_name.lower()}{email_pattern}"
     # Use provided password or fallback to default from .env
     password = new_password if new_password else os.environ.get("DEFAULT_PASSWORD", "SecureRandomPassword123!")
     headers = get_azure_headers("application/json")
+    
+    # Build user payload with job_title and department if provided
     user_payload = {
         "accountEnabled": True,
         "displayName": f"{first_name} {last_name}",
@@ -194,17 +203,48 @@ def create_user_action(first_name: str, last_name: str, license_type: Optional[s
             "password": password
         }
     }
+    if job_title:
+        user_payload["jobTitle"] = job_title
+    if department:
+        user_payload["department"] = department
+
+    # Create the user
     create_user_url = "https://graph.microsoft.com/v1.0/users"
     response = requests.post(create_user_url, json=user_payload, headers=headers)
     response.raise_for_status()
     user_data = response.json()
     user_id = user_data.get("id")
+
+    # Handle group membership if group_id is provided
+    assigned_group = None
+    if group_id:
+        group_url = f"https://graph.microsoft.com/v1.0/groups/{group_id}/members/$ref"
+        group_payload = {"@odata.id": f"https://graph.microsoft.com/v1.0/directoryObjects/{user_id}"}
+        group_response = requests.post(group_url, json=group_payload, headers=headers)
+        group_response.raise_for_status()
+        assigned_group = group_id
+
+    # Handle license assignment if DEFAULT_LICENSE_SKUID is set
     assigned_license = None
+    default_sku_id = os.environ.get("DEFAULT_LICENSE_SKUID")
+    if default_sku_id and default_sku_id.strip():  # Check if not None and not empty
+        license_url = f"https://graph.microsoft.com/v1.0/users/{user_id}/assignLicense"
+        license_payload = {
+            "addLicenses": [{"skuId": default_sku_id}],
+            "removeLicenses": []
+        }
+        license_response = requests.post(license_url, json=license_payload, headers=headers)
+        license_response.raise_for_status()
+        assigned_license = license_type or "Default SKU"  # Use license_type if provided, else a placeholder
+
     return {
         "azure": {
             "userPrincipalName": user_principal_name,
             "displayName": user_data.get("displayName"),
-            "assignedLicense": assigned_license
+            "assignedLicense": assigned_license,
+            "jobTitle": job_title,
+            "department": department,
+            "groupId": assigned_group
         }
     }
 
@@ -445,9 +485,9 @@ async def process_agent(request: AgentRequest):
     audit_lines.append(f"Action requested: '{extraction.action}'.")
     audit_lines.append("All actions have been successfully completed.")
     audit_lines.append("Regards, IT Support")    
-    if azure_data:
-        audit_lines.append("Azure actions performed:")
-        audit_lines.append(f"{json.dumps(azure_data, indent=2)}")
+    # if azure_data:
+    #     audit_lines.append("Azure actions performed:")
+    #     audit_lines.append(f"{json.dumps(azure_data, indent=2)}")
     audit_log = "\n".join(audit_lines)
 
     # Update Freshdesk Ticket
