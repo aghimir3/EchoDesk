@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=mssql+pyodbc://sa:YourStrongPassword123!@db:1433/echodesk?driver=ODBC+Driver+17+for+SQL+Server
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - FRESHDESK_DOMAIN=${FRESHDESK_DOMAIN}
+      - FRESHDESK_API_KEY=${FRESHDESK_API_KEY}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
+    depends_on:
+      - db
+    networks:
+      - echodesk-network
+
+  db:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=YourStrongPassword123!
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql-data:/var/opt/mssql
+    networks:
+      - echodesk-network
+
+networks:
+  echodesk-network:
+    driver: bridge
+
+volumes:
+  mssql-data:
