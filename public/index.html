@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EchoDesk Agent</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        /* Reset and base styles */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            display: flex;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+            padding: 30px;
+            width: 100%;
+            max-width: 1200px;
+            color: #333;
+        }
+
+        .form-panel {
+            flex: 1;
+        }
+
+        .json-panel {
+            flex: 1;
+            margin-left: 20px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            padding: 15px;
+            display: none; /* Hidden by default, shown only on "completed" */
+        }
+
+        #jsonCode {
+            background: #fff;
+            border: 1px solid #2a5298;
+            padding: 10px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 10px;
+            color: #1e3c72;
+            font-size: 2em;
+        }
+
+        h1 i {
+            margin-right: 10px;
+            font-size: 1.2em;
+        }
+
+        .tagline {
+            text-align: center;
+            color: #666;
+            margin-bottom: 20px;
+            font-size: 1em;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #2a5298;
+        }
+
+        textarea, input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        textarea:focus, input[type="text"]:focus {
+            border-color: #2a5298;
+            outline: none;
+        }
+
+        button {
+            background: #2a5298;
+            color: #fff;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            width: 100%;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #1e3c72;
+        }
+
+        #currentProcessId {
+            margin-bottom: 10px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        #status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background: #f9f9f9;
+            color: #333;
+            display: none;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        #status.show {
+            display: block;
+        }
+
+        #status.completed {
+            background: #e6ffe6;
+            border: 1px solid #00cc00;
+        }
+
+        #status.failed {
+            background: #ffe6e6;
+            border: 1px solid #cc0000;
+        }
+
+        .process-id {
+            font-weight: bold;
+            color: #2a5298;
+            font-family: monospace;
+        }
+
+        .freshdesk-link {
+            color: #2a5298;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        .freshdesk-link:hover {
+            text-decoration: underline;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 0.8em;
+            color: #666;
+        }
+
+        .footer:hover {
+            color: #2a5298;
+            cursor: pointer;
+        }
+
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #2a5298;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+            .json-panel {
+                margin-left: 0;
+                margin-top: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="form-panel">
+            <h1><i class="fas fa-headset" title="EchoDesk Agent"></i> EchoDesk Agent</h1>
+            <p class="tagline">Your AI-powered helpdesk assistant.</p>
+            <div class="form-group">
+                <label for="transcript">Enter your request:</label>
+                <textarea id="transcript" rows="4" placeholder="e.g., Create an account for John Doe with password EchoDesk123!!"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="processId">Check Process ID (optional):</label>
+                <input type="text" id="processId" placeholder="Enter process ID to check status">
+            </div>
+            <div id="currentProcessId"></div>
+            <div id="status"></div>
+            <button onclick="submitRequest()" aria-label="Submit request to EchoDesk Agent">Submit Request</button>
+            <div class="footer">Powered by EchoDesk</div>
+        </div>
+        <div class="json-panel" id="jsonOutput">
+            <h2>EchoDesk Response</h2>
+            <pre id="jsonCode"></pre>
+        </div>
+    </div>
+
+    <script>
+        const statusDiv = document.getElementById('status');
+        const jsonOutput = document.getElementById('jsonOutput');
+        const jsonCode = document.getElementById('jsonCode');
+        let freshdeskDomain = ''; // Initialize as empty, fetch from backend
+
+        // Fetch Freshdesk domain on page load
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                if (!response.ok) throw new Error('Failed to load configuration');
+                const config = await response.json();
+                freshdeskDomain = config.freshdesk_domain;
+            } catch (error) {
+                console.error('Error loading Freshdesk domain:', error);
+                statusDiv.innerHTML = `Error loading configuration: ${error.message}`;
+                statusDiv.className = 'show failed';
+            }
+        }
+
+        // Call loadConfig when the page loads
+        window.onload = loadConfig;
+
+        async function submitRequest() {
+            const transcript = document.getElementById('transcript').value.trim();
+            const processId = document.getElementById('processId').value.trim();
+
+            jsonOutput.style.display = 'none';
+            statusDiv.innerHTML = '<span class="spinner"></span> Processing...';
+            statusDiv.className = 'show';
+
+            try {
+                if (processId) {
+                    // Check status of an existing process
+                    document.getElementById('currentProcessId').innerHTML = `Current Process ID: <span class="process-id">${processId}</span>`;
+                    const response = await fetch(`/api/process-updates/${processId}`, {
+                        method: 'GET',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Unknown error');
+                    }
+                    const result = await response.json();
+                    displayStatus(result.data);
+                } else if (transcript) {
+                    // Submit a new request
+                    const response = await fetch('/api/agent', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ transcript })
+                    });
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Unknown error');
+                    }
+                    const result = await response.json();
+                    if (result.success) {
+                        const processId = result.data.process_id;
+                        document.getElementById('currentProcessId').innerHTML = `Current Process ID: <span class="process-id">${processId}</span>`;
+                        statusDiv.innerHTML = `Request submitted!<br>Checking status...`;
+                        checkStatus(processId);
+                    } else {
+                        throw new Error(result.error || 'Request failed');
+                    }
+                } else {
+                    throw new Error('Please enter a request or process ID');
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `Error: ${error.message}`;
+                statusDiv.className = 'show failed';
+            }
+        }
+
+        async function checkStatus(processId) {
+            const interval = setInterval(async () => {
+                statusDiv.innerHTML = '<span class="spinner"></span> Checking status...';
+                try {
+                    const response = await fetch(`/api/process-updates/${processId}`);
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Unknown error');
+                    }
+                    const result = await response.json();
+                    displayStatus(result.data);
+                    if (result.data.status === 'completed' || result.data.status === 'failed') {
+                        clearInterval(interval);
+                    }
+                } catch (error) {
+                    statusDiv.innerHTML = `Error checking status: ${error.message}`;
+                    statusDiv.className = 'show failed';
+                    clearInterval(interval);
+                }
+            }, 2000); // Check every 2 seconds
+        }
+
+        function displayStatus(data) {
+            let html = `Status: ${data.status}<br>Updates:<ul>`;
+            data.updates.forEach(update => html += `<li>${update}</li>`);
+            html += '</ul>';
+
+            if (data.ticket_number && freshdeskDomain) {
+                const freshdeskUrl = `https://${freshdeskDomain}/a/tickets/${data.ticket_number}`;
+                html += `<br><a class="freshdesk-link" href="${freshdeskUrl}" target="_blank">View Freshdesk Ticket</a>`;
+            }
+
+            if (data.status === 'completed') {
+                jsonCode.textContent = JSON.stringify(data.result, null, 2);
+                jsonOutput.style.display = 'block';
+                statusDiv.classList.add('completed');
+            } else if (data.status === 'failed') {
+                html += `<br><strong>Error:</strong> ${data.error}`;
+                jsonOutput.style.display = 'none';
+                statusDiv.classList.add('failed');
+            } else {
+                jsonOutput.style.display = 'none';
+                statusDiv.classList.remove('completed', 'failed');
+            }
+
+            statusDiv.innerHTML = html;
+            statusDiv.className = 'show';
+        }
+    </script>
+</body>
+</html>
