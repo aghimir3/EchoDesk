@@ -55,7 +55,7 @@ echo Done.
 
 :: Step 6: Reload .env by running Uvicorn
 echo Starting Uvicorn to reload .env...
-python -m uvicorn agents-service.agents_service:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 echo If you see "Application startup complete", the env is reloaded.
 
 pause

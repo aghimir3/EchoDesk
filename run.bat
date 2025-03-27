@@ -49,7 +49,7 @@ echo Done.
 
 :: Step 5: Run Uvicorn with no cache
 echo Starting Uvicorn with cleared cache...
-python -m uvicorn agents-service.agents_service:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 echo If you see "Application startup complete", Uvicorn is running.
 
 pause
