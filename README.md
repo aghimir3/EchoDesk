@@ -37,8 +37,8 @@ Follow these steps to get EchoDesk Agent up and running:
 
 1. **Clone the Repository**:
    ```bash
-   git clone https://github.com/yourusername/echodesk-agent.git
-   cd echodesk-agent
+   git clone https://github.com/aghimir3/EchoDesk.git
+   cd echodesk
    ```
 
 2. **Set Up a Virtual Environment**:
